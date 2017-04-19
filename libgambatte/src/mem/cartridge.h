@@ -22,6 +22,7 @@
 #include "memptrs.h"
 #include "rtc.h"
 #include "savestate.h"
+#include "tpp1x.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,6 +62,7 @@ public:
 class Cartridge {
 	MemPtrs memptrs;
 	Rtc rtc;
+	Tpp1X tpp1x;
 	std::auto_ptr<Mbc> mbc;
 	
 public:
@@ -99,9 +101,13 @@ public:
 
 	int loadROM(const char *romfiledata, unsigned romfilelength, bool forceDmg, bool multicartCompat);
 	const char * romTitle() const { return reinterpret_cast<const char *>(memptrs.romdata() + 0x134); }
+	bool isTPP1() const { return tpp1x.isTPP1(); }
+	unsigned char TPP1Read(unsigned p) const { return tpp1x.read(p); }
+	void TPP1Write(unsigned p, unsigned data) { tpp1x.write(p, data); }
 
 	void setRTCCallback(std::uint32_t (*callback)()) {
-		rtc.setRTCCallback(callback);
+		if (tpp1x.isTPP1()) tpp1x.setRTCCallback(callback);
+		else rtc.setRTCCallback(callback);
 	}
 
 	template<bool isReader>void SyncState(NewState *ns);

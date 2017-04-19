@@ -386,7 +386,9 @@ void Memory::updateOamDma(const unsigned long cycleCounter) {
 			if (oamDmaPos == 0)
 				startOamDma(lastOamDmaUpdate - 1);
 
-			ioamhram[oamDmaPos] = oamDmaSrc ? oamDmaSrc[oamDmaPos] : cart.rtcRead();
+			if (oamDmaSrc) ioamhram[oamDmaPos] = oamDmaSrc[oamDmaPos];
+			else if (cart.isTPP1()) ioamhram[oamDmaPos] = cart.TPP1Read(oamDmaPos);
+			else ioamhram[oamDmaPos] = cart.rtcRead();
 		} else if (oamDmaPos == 0xA0) {
 			endOamDma(lastOamDmaUpdate - 1);
 			lastOamDmaUpdate = DISABLED_TIME;
@@ -545,9 +547,8 @@ unsigned Memory::nontrivial_read(const unsigned P, const unsigned long cycleCoun
 				return cart.vrambankptr()[P];
 			}
 
-			if (cart.rsrambankptr())
-				return cart.rsrambankptr()[P];
-
+			if (cart.rsrambankptr()) return cart.rsrambankptr()[P];
+			if (cart.isTPP1()) return cart.TPP1Read(P);
 			return cart.rtcRead();
 		}
 
@@ -573,9 +574,8 @@ unsigned Memory::nontrivial_peek(const unsigned P) {
 			return cart.vrambankptr()[P];
 		}
 
-		if (cart.rsrambankptr())
-			return cart.rsrambankptr()[P];
-
+		if (cart.rsrambankptr()) return cart.rsrambankptr()[P];
+		if (cart.isTPP1()) return cart.TPP1Read(P);
 		return cart.rtcRead(); // verified side-effect free
 	}
 	if (P < 0xFE00)
@@ -990,10 +990,9 @@ void Memory::nontrivial_write(const unsigned P, const unsigned data, const unsig
 				cart.vrambankptr()[P] = data;
 			}
 		} else if (P < 0xC000) {
-			if (cart.wsrambankptr())
-				cart.wsrambankptr()[P] = data;
-			else
-				cart.rtcWrite(data);
+			if (cart.wsrambankptr()) cart.wsrambankptr()[P] = data;
+			else if (cart.isTPP1()) cart.TPP1Write(P, data);
+			else cart.rtcWrite(data);
 		} else
 			cart.wramdata(P >> 12 & 1)[P & 0xFFF] = data;
 	} else if (P - 0xFF80u >= 0x7Fu) {

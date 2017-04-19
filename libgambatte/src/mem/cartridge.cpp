@@ -18,6 +18,7 @@
  ***************************************************************************/
 #include "cartridge.h"
 #include "../savestate.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -486,8 +487,102 @@ public:
 	}
 };
 
-static bool hasRtc(const unsigned headerByte0x147) {
-	switch (headerByte0x147) {
+class Tpp1 : public DefaultMbc {
+	MemPtrs &memptrs;
+	Tpp1X *const tpp1x;
+	unsigned short rombank;
+	unsigned char rambank;
+	unsigned char mapmode;
+
+	void setRambank() const {
+		unsigned flags = 0;
+		switch (mapmode) {
+		case 0: flags = MemPtrs::READ_EN | MemPtrs::RTC_EN; break;
+		case 1: flags = MemPtrs::READ_EN; break;
+		case 2: flags = MemPtrs::READ_EN | MemPtrs::WRITE_EN; break;
+		case 3: flags = tpp1x->getFeatures() & 4 ? MemPtrs::READ_EN | MemPtrs::WRITE_EN | MemPtrs::RTC_EN : 0; break;
+		}
+		tpp1x->setRambank(rambank);
+		memptrs.setRambank(flags, rambank & (rambanks(memptrs) - 1));
+	}
+
+	void setRombank() const {
+		tpp1x->setRombank(rombank);
+		memptrs.setRombank(rombank & (rombanks(memptrs) - 1));
+	}
+
+public:
+	explicit Tpp1(MemPtrs &memptrs, Tpp1X *const tpp1x)
+	: memptrs(memptrs)
+	, tpp1x(tpp1x)
+	, rombank(1)
+	, rambank(0)
+	, mapmode(0)
+	{
+	}
+
+	virtual void romWrite(unsigned const p, unsigned const data) {
+		if (p >= 0x4000) return;
+		switch (p & 3) {
+		case 0: // MR0
+			rombank = (rombank & 0xFF00) | data;
+			setRombank();
+			break;
+		case 1: // MR1
+			rombank = (rombank & 0x00FF) | (data << 8);
+			setRombank();
+			break;
+		case 2: // MR2 (SRAM)
+			rambank = data;
+			setRambank();
+			break;
+		case 3: // MR3
+			switch(data) {
+			case 0x00: mapmode = 0; tpp1x->setMap(0); setRambank(); break;
+ 			case 0x02: mapmode = 1; tpp1x->setMap(1); setRambank(); break;
+ 			case 0x03: mapmode = 2; tpp1x->setMap(2); setRambank(); break;
+ 			case 0x05: mapmode = 3; tpp1x->setMap(3); setRambank(); break;
+			case 0x10: tpp1x->latch(); break;
+			case 0x11: tpp1x->settime(); break;
+			case 0x14: tpp1x->resetOverflow(); break;
+			case 0x18: tpp1x->halt(); break;
+			case 0x19: tpp1x->resume(); break;
+			case 0x20:
+			case 0x21:
+			case 0x22:
+			case 0x23: tpp1x->setRumble(data & 3); break;
+			}
+			break;
+		}
+	}
+
+	virtual void saveState(SaveState::Mem &ss) const {
+		ss.rombank = rombank;
+		ss.rambank = rambank;
+	}
+
+	virtual void loadState(SaveState::Mem const &ss) {
+		rombank = ss.rombank;
+		rambank = ss.rambank;
+		setRambank();
+		setRombank();
+	}
+
+	virtual void SyncState(NewState *ns, bool isReader)
+	{
+		NSS(rombank);
+		NSS(rambank);
+		NSS(mapmode);
+	}
+};
+
+static bool checkTPP1(unsigned char * header) {
+	return header[0x0147] == 0xBC && header[0x0149] == 0xC1 && header[0x014A] == 0x65;
+}
+
+static bool hasRtc(unsigned char * header) {
+	if (checkTPP1(header)) return header[0x153] & 4;
+	switch (header[0x0147]) {
 	case 0x0F:
 	case 0x10: return true;
 	default: return false;
@@ -503,7 +598,8 @@ void Cartridge::setStatePtrs(SaveState &state) {
 }
 
 void Cartridge::loadState(const SaveState &state) {
-	rtc.loadState(state);
+	if (tpp1x.isTPP1()) tpp1x.loadState(state);
+	else rtc.loadState(state);
 	mbc->loadState(state.mem);
 }
 
@@ -533,10 +629,10 @@ int Cartridge::loadROM(const char *romfiledata, unsigned romfilelength, const bo
 	unsigned rambanks = 1;
 	unsigned rombanks = 2;
 	bool cgb = false;
-	enum Cartridgetype { PLAIN, MBC1, MBC2, MBC3, MBC5, HUC1 } type = PLAIN;
+	enum Cartridgetype { PLAIN, MBC1, MBC2, MBC3, MBC5, HUC1, TPP1 } type = PLAIN;
 
 	{
-		unsigned char header[0x150];
+		unsigned char header[0x154];
 		//rom->read(reinterpret_cast<char*>(header), sizeof header);
 		if (romfilelength >= sizeof header)
 			std::memcpy(header, romfiledata, sizeof header);
@@ -569,6 +665,9 @@ int Cartridge::loadROM(const char *romfiledata, unsigned romfilelength, const bo
 		case 0x1C: std::puts("MBC5+RUMBLE ROM not supported."); type = MBC5; break;
 		case 0x1D: std::puts("MBC5+RUMBLE+RAM ROM not suported."); type = MBC5; break;
 		case 0x1E: std::puts("MBC5+RUMBLE+RAM+BATTERY ROM not supported."); type = MBC5; break;
+		case 0xBC:
+			if (checkTPP1(header)) { std::puts("TPP1 ROM loaded."); type = TPP1; break; }
+			else { std::puts("Wrong data-format, corrupt or unsupported ROM."); return -1; } // broken TPP1 header
 		case 0xFC: std::puts("Pocket Camera ROM not supported."); return -1;
 		case 0xFD: std::puts("Bandai TAMA5 ROM not supported."); return -1;
 		case 0xFE: std::puts("HuC3 ROM not supported."); return -1;
@@ -594,24 +693,30 @@ int Cartridge::loadROM(const char *romfiledata, unsigned romfilelength, const bo
 
 		std::printf("rombanks: %u\n", rombanks);*/
 
-		switch (header[0x0149]) {
-		case 0x00: /*std::puts("No RAM");*/ rambanks = type == MBC2; break;
-		case 0x01: /*std::puts("2kB RAM");*/ /*rambankrom=1; break;*/
-		case 0x02: /*std::puts("8kB RAM");*/
-			rambanks = 1;
-			break;
-		case 0x03: /*std::puts("32kB RAM");*/
-			rambanks = 4;
-			break;
-		case 0x04: /*std::puts("128kB RAM");*/
-			rambanks = 16;
-			break;
-		case 0x05: /*std::puts("undocumented kB RAM");*/
-			rambanks = 16;
-			break;
-		default: /*std::puts("Wrong data-format, corrupt or unsupported ROM loaded.");*/
-			rambanks = 16;
-			break;
+		if (type == TPP1) {
+			if(header[0x152] == 0) rambanks = 0;
+			else rambanks = 1 << std::max(header[0x152] - 1, 8);
+		}
+		else {
+			switch (header[0x0149]) {
+			case 0x00: /*std::puts("No RAM");*/ rambanks = type == MBC2; break;
+			case 0x01: /*std::puts("2kB RAM");*/ /*rambankrom=1; break;*/
+			case 0x02: /*std::puts("8kB RAM");*/
+				rambanks = 1;
+				break;
+			case 0x03: /*std::puts("32kB RAM");*/
+				rambanks = 4;
+				break;
+			case 0x04: /*std::puts("128kB RAM");*/
+				rambanks = 16;
+				break;
+			case 0x05: /*std::puts("undocumented kB RAM");*/
+				rambanks = 16;
+				break;
+			default: /*std::puts("Wrong data-format, corrupt or unsupported ROM loaded.");*/
+				rambanks = 16;
+				break;
+			}
 		}
 		
 		cgb = header[0x0143] >> 7 & (1 ^ forceDmg);
@@ -627,6 +732,7 @@ int Cartridge::loadROM(const char *romfiledata, unsigned romfilelength, const bo
 	mbc.reset();
 	memptrs.reset(rombanks, rambanks, cgb ? 8 : 2);
 	rtc.set(false, 0);
+	tpp1x.set(false, 0);
 
 	//rom->rewind();
 	//rom->read(reinterpret_cast<char*>(memptrs.romdata()), (filesize / 0x4000) * 0x4000ul);
@@ -648,16 +754,21 @@ int Cartridge::loadROM(const char *romfiledata, unsigned romfilelength, const bo
 
 		break;
 	case MBC2: mbc.reset(new Mbc2(memptrs)); break;
-	case MBC3: mbc.reset(new Mbc3(memptrs, hasRtc(memptrs.romdata()[0x147]) ? &rtc : 0)); break;
+	case MBC3: mbc.reset(new Mbc3(memptrs, hasRtc(memptrs.romdata()) ? &rtc : 0)); break;
 	case MBC5: mbc.reset(new Mbc5(memptrs)); break;
 	case HUC1: mbc.reset(new HuC1(memptrs)); break;
+	case TPP1:
+		tpp1x.set(true, memptrs.romdata()[0x153]);
+		mbc.reset(new Tpp1(memptrs, &tpp1x));
+		break;
 	}
 
 	return 0;
 }
 
-static bool hasBattery(const unsigned char headerByte0x147) {
-	switch (headerByte0x147) {
+static bool hasBattery(unsigned char * header) {
+	if (checkTPP1(header)) return header[0x0153] & 8;
+	switch (header[0x0147]) {
 	case 0x03:
 	case 0x06:
 	case 0x09:
@@ -672,40 +783,41 @@ static bool hasBattery(const unsigned char headerByte0x147) {
 }
 
 void Cartridge::loadSavedata(const char *data) {
-	if (hasBattery(memptrs.romdata()[0x147])) {
+	if (hasBattery(memptrs.romdata())) {
 		int length = memptrs.rambankdataend() - memptrs.rambankdata();
 		std::memcpy(memptrs.rambankdata(), data, length);
 		data += length;
 		enforce8bit(memptrs.rambankdata(), length);
 	}
 
-	if (hasRtc(memptrs.romdata()[0x147])) {
+	if (hasRtc(memptrs.romdata())) {
 		unsigned long basetime;
 		std::memcpy(&basetime, data, 4);
-		rtc.setBaseTime(basetime);
+		if (checkTPP1(memptrs.romdata())) tpp1x.setBaseTime(basetime);
+		else rtc.setBaseTime(basetime);
 	}
 }
 
 int Cartridge::saveSavedataLength() {
 	int ret = 0;
-	if (hasBattery(memptrs.romdata()[0x147])) {
+	if (hasBattery(memptrs.romdata())) {
 		ret = memptrs.rambankdataend() - memptrs.rambankdata();
 	}
-	if (hasRtc(memptrs.romdata()[0x147])) {
+	if (hasRtc(memptrs.romdata())) {
 		ret += 4;
 	}
 	return ret;
 }
 
 void Cartridge::saveSavedata(char *dest) {
-	if (hasBattery(memptrs.romdata()[0x147])) {
+	if (hasBattery(memptrs.romdata())) {
 		int length = memptrs.rambankdataend() - memptrs.rambankdata();
 		std::memcpy(dest, memptrs.rambankdata(), length);
 		dest += length;
 	}
 
-	if (hasRtc(memptrs.romdata()[0x147])) {
-		const unsigned long basetime = rtc.getBaseTime();
+	if (hasRtc(memptrs.romdata())) {
+		const unsigned long basetime = checkTPP1(memptrs.romdata()) ? tpp1x.getBaseTime() : rtc.getBaseTime();
 		std::memcpy(dest, &basetime, 4);
 	}
 }
@@ -743,6 +855,7 @@ SYNCFUNC(Cartridge)
 {
 	SSS(memptrs);
 	SSS(rtc);
+	SSS(tpp1x);
 	TSS(mbc);
 }
 
