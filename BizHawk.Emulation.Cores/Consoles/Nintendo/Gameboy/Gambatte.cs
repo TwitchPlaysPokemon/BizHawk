@@ -360,8 +360,23 @@ namespace BizHawk.Emulation.Cores.Nintendo.Gameboy
 			FrameAdvancePost();
 		}
 
+        static bool isTPP1(byte[] header)
+        {
+            return header[0x0147] == 0xBC && header[0x0149] == 0xC1 && header[0x014A] == 0x65;
+        }
+
 		static string MapperName(byte[] romdata)
 		{
+            if (isTPP1(romdata))
+            {
+                string text = "TPP1 ROM";
+                if ((romdata[0x153] & 3) == 3) text += "+RUMBLEPLUS";
+                if ((romdata[0x153] & 1) == 1) text += "+RUMBLE";
+                if ((romdata[0x153] & 4) == 4) text += "+TIMER";
+                if (romdata[0x152] != 0) text += "+RAM";
+                if ((romdata[0x153] & 8) == 8) text += "+BATTERY";
+                return text;
+            }
 			switch (romdata[0x147])
 			{
 				case 0x00: return "Plain ROM"; // = PLAIN; break;
@@ -432,7 +447,11 @@ namespace BizHawk.Emulation.Cores.Nintendo.Gameboy
 				case 0x20: throw new UnsupportedGameException("\"MBC6\" Mapper not supported!");
 				case 0x22: throw new UnsupportedGameException("\"MBC7\" Mapper not supported!");
 
-				case 0xfc: throw new UnsupportedGameException("\"Pocket Camera\" Mapper not supported!");
+                case 0xbc:
+                    if (isTPP1(romdata)) break;
+                    else { throw new UnsupportedGameException(string.Format("Unknown mapper: {0:x2}", romdata[0x147])); } // broken TPP1 header
+
+                case 0xfc: throw new UnsupportedGameException("\"Pocket Camera\" Mapper not supported!");
 				case 0xfd: throw new UnsupportedGameException("\"Bandai TAMA5\" Mapper not supported!");
 				case 0xfe: throw new UnsupportedGameException("\"HuC3\" Mapper not supported!");
 				case 0xff: break;

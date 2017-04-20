@@ -47,7 +47,7 @@ private:
 public:
 	Tpp1X();
 	std::uint32_t getBaseTime() const { return baseTime; }
-	void setBaseTime(std::uint32_t baseTime) { baseTime = baseTime; }
+	void setBaseTime(std::uint32_t baseTimeArg) { baseTime = baseTimeArg; }
 	void latch();
 	void settime();
 	void resetOverflow() { overflow = false;}
@@ -55,13 +55,13 @@ public:
 	void resume();
 	void setRumble(unsigned char amount);
 	void loadState(SaveState const &state);
-	void set(bool enabled, unsigned char features) {
-		enabled = enabled;
-		features = features;
+	void set(bool enabledArg, unsigned char featuresArg) {
+		enabled = enabledArg;
+		features = featuresArg;
 	}
 	bool isTPP1() const { return enabled; }
-	void setRombank(unsigned short rombank) { rombank = rombank; }
-	void setRambank(unsigned char rambank) { rambank = rambank; }
+	void setRombank(unsigned short rombankArg) { rombank = rombankArg; }
+	void setRambank(unsigned char rambankArg) { rambank = rambankArg; }
 	void setMap(unsigned char map) { curmap = map; }
 	unsigned char getFeatures() const { return features; }
 	unsigned char read(unsigned p) const;
