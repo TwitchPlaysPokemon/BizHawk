@@ -1460,6 +1460,11 @@ namespace BizHawk.Client.EmuHawk
 				str = "";
 			}
 
+			if (Global.Config.CustomWindowTitle.Length != 0)
+			{
+				str = Global.Config.CustomWindowTitle;
+			}
+
 			Text = str;
 		}
 

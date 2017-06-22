@@ -515,6 +515,9 @@ namespace BizHawk.Client.Common
 		public bool GBA_UsemGBA = false;
 		public bool CoreForcingViaGameDB = true;
 		public string LibretroCore;
+
+		// Custom window title
+		public string CustomWindowTitle = string.Empty;
 	}
 
 	// These are used in the defctrl.json or wherever
